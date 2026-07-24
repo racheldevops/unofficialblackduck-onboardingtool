@@ -33,6 +33,7 @@ from ..settings import (
     ACTIVITY_DAYS,
     ACTIVITY_POLICY_VERSION,
     CHECKPOINT_SCHEMA_VERSION,
+    GITHUB_GRAPHQL_URL,
     LANGUAGE_POLICY_VERSION,
     PILOT_SELECTION_METHOD,
 )
@@ -155,6 +156,11 @@ def run_inventory(
 
     client = GitHubClient(
         token,
+        endpoint=getattr(
+            args,
+            "graphql_url",
+            GITHUB_GRAPHQL_URL,
+        ),
         timeout=args.timeout,
         max_attempts=args.retries,
         deadline=deadline,
