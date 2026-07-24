@@ -1,5 +1,7 @@
 # Unofficial BlackDuck GitHub Organization Onboarding tool
 
+THIS PROJECT IS IN ACTIVE DEV AND IS UNFINISHED IT ITS CURRENT STATE
+
 There was an enterprise business need to onboard Blackduck SCA scanning across multiple organisations
 that each contained multiple thousands of repositories, with certain repo's & language types being excluded
 due to another scanning solution being used for them. The official BlackDuck App does not provide enough 
