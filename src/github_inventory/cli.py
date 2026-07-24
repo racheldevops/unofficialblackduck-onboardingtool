@@ -36,8 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-dir",
         type=Path,
+        default=Path(".inventory/inventory"),
         help=(
-            "Artifact directory. Defaults to output/$GITHUB_ORG. "
+            "Artifact directory (default: .inventory/inventory). "
             "--dry-run always uses a retained temporary directory."
         ),
     )
