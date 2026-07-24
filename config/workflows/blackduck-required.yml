@@ -1,0 +1,93 @@
+name: Black Duck SCA
+
+on:
+  workflow_call:
+    inputs:
+      run_live_scan:
+        description: Run the Black Duck SCA scan
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      BLACKDUCK_API_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      run_live_scan:
+        description: Run a live Black Duck SCA scan
+        required: true
+        type: boolean
+        default: false
+  pull_request:
+    branches:
+      - "**"
+  push:
+    branches:
+      - "**"
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blackduck-sca-${{ github.repository_id }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  blackduck-sca:
+    name: Black Duck SCA
+    if: >-
+      ${{ github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate workflow contract
+        if: >-
+          ${{ github.repository == 'BD-Test-Organisation/blackduck-workflows' ||
+          (github.event_name == 'workflow_dispatch' && !inputs.run_live_scan) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_WORKFLOW}" = "Black Duck SCA"
+          test -n "${GITHUB_REPOSITORY}"
+          test -n "${GITHUB_SHA}"
+          printf '%s\n' "Black Duck workflow contract validation passed."
+
+      - name: Validate Black Duck configuration
+        if: >-
+          ${{ github.repository != 'BD-Test-Organisation/blackduck-workflows' &&
+          (github.event_name != 'workflow_dispatch' || inputs.run_live_scan) }}
+        shell: bash
+        env:
+          BLACKDUCK_URL: ${{ vars.BLACKDUCK_URL }}
+          BLACKDUCK_API_TOKEN: ${{ secrets.BLACKDUCK_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${BLACKDUCK_URL}" || {
+            printf '%s\n' "BLACKDUCK_URL organization variable is required." >&2
+            exit 1
+          }
+          test -n "${BLACKDUCK_API_TOKEN}" || {
+            printf '%s\n' "BLACKDUCK_API_TOKEN organization secret is required." >&2
+            exit 1
+          }
+
+      - name: Run Black Duck SCA
+        if: >-
+          ${{ github.repository != 'BD-Test-Organisation/blackduck-workflows' &&
+          (github.event_name != 'workflow_dispatch' || inputs.run_live_scan) }}
+        uses: blackduck-inc/black-duck-security-scan@152247222aa9cd38124acd5c0cf60f4db71adc3f
+        with:
+          blackducksca_url: ${{ vars.BLACKDUCK_URL }}
+          blackducksca_token: ${{ secrets.BLACKDUCK_API_TOKEN }}
+          blackducksca_scan_full: true
+          blackducksca_scan_failure_severities: BLOCKER,CRITICAL,MAJOR,MINOR,TRIVIAL,UNSPECIFIED
+          blackducksca_waitForScan: true
+          github_token: ${{ github.token }}
+          detect_args: >-
+            --detect.project.name=${{ github.repository }}
+            --detect.project.version.name=${{ github.head_ref || github.ref_name }}

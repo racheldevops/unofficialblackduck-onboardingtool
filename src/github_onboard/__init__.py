@@ -9,6 +9,7 @@ from .errors import (
     RepositoryOperationError,
 )
 from .properties import run_properties
+from .workflow import run_workflow
 from .workspace import DEFAULT_WORKSPACE, Workspace
 
 
@@ -23,4 +24,5 @@ __all__ = [
     "initialize_config",
     "load_config",
     "run_properties",
+    "run_workflow",
 ]

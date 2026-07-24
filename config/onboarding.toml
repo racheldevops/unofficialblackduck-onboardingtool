@@ -1,0 +1,45 @@
+schema_version = 1
+
+[github]
+organization = "BD-Test-Organisation"
+rest_api_url = "https://api.github.com"
+graphql_url = "https://api.github.com/graphql"
+web_url = "https://github.com"
+
+[inventory]
+inspection_depth = "root"
+workers = 16
+max_hours = 2.0
+timeout_seconds = 30.0
+retries = 4
+
+[properties]
+activity_name = "blackduck_activity"
+languages_name = "blackduck_languages"
+policy_name = "blackduck_sca_policy"
+assignment_mode = "initialize_only"
+
+[policy]
+active_known = "required"
+inactive_known = "review"
+unknown = "review"
+fork = "review"
+
+[workflow]
+enabled = true
+source_repository = "BD-Test-Organisation/blackduck-workflows"
+local_path = "workflows/blackduck-required.yml"
+path = ".github/workflows/blackduck-required.yml"
+branch = "main"
+url_variable_name = "BLACKDUCK_URL"
+secret_name = "BLACKDUCK_API_TOKEN"
+runner = "ubuntu-latest"
+timeout_minutes = 30
+action_repository = "blackduck-inc/black-duck-security-scan"
+action_commit_sha = "152247222aa9cd38124acd5c0cf60f4db71adc3f"
+
+[ruleset]
+enabled = false
+name = ""
+enforcement = "evaluate"
+include_policy_value = "required"

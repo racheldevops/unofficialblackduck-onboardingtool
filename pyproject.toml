@@ -19,6 +19,7 @@ test = [
 [project.scripts]
 github-inventory = "github_inventory.cli:main"
 
+github-onboard = "github_onboard.cli:main"
 [tool.setuptools]
 package-dir = { "" = "src" }
 
