@@ -70,6 +70,14 @@ class WorkflowSettings:
 
 
 @dataclasses.dataclass(frozen=True)
+class RulesetSettings:
+    enabled: bool
+    name: str
+    enforcement: str
+    include_policy_value: str
+
+
+@dataclasses.dataclass(frozen=True)
 class OnboardingConfig:
     schema_version: int
     github: GitHubSettings
@@ -77,6 +85,7 @@ class OnboardingConfig:
     properties: PropertySettings
     policy: PolicySettings
     workflow: WorkflowSettings
+    ruleset: RulesetSettings
     source_path: Path
     source_sha256: str
 

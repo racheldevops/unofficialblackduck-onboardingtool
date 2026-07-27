@@ -17,6 +17,7 @@ from .models import (
     PolicySettings,
     PropertySettings,
     RepositoryOverride,
+    RulesetSettings,
     WorkflowSettings,
 )
 from .workspace import atomic_write_text
@@ -537,6 +538,69 @@ def _workflow_settings(
     return settings
 
 
+def _ruleset_settings(
+    table: dict[str, Any],
+    workflow: WorkflowSettings,
+) -> RulesetSettings:
+    enabled = _boolean_value(
+        table,
+        "enabled",
+        "ruleset.enabled",
+    )
+    name = _optional_string(
+        table,
+        "name",
+        "ruleset.name",
+    )
+    enforcement = _optional_string(
+        table,
+        "enforcement",
+        "ruleset.enforcement",
+        default="evaluate",
+    )
+    include_policy_value = _optional_string(
+        table,
+        "include_policy_value",
+        "ruleset.include_policy_value",
+        default="required",
+    )
+
+    settings = RulesetSettings(
+        enabled=enabled,
+        name=name,
+        enforcement=enforcement,
+        include_policy_value=include_policy_value,
+    )
+
+    if not enabled:
+        return settings
+
+    if not workflow.enabled:
+        raise ConfigurationError(
+            "Ruleset automation requires workflow.enabled = true."
+        )
+
+    if not name or len(name) > 100:
+        raise ConfigurationError(
+            "Configuration field 'ruleset.name' must contain "
+            "between 1 and 100 characters."
+        )
+
+    if enforcement not in {"disabled", "evaluate"}:
+        raise ConfigurationError(
+            "Configuration field 'ruleset.enforcement' must be "
+            "'disabled' or 'evaluate'. Activation is a separate command."
+        )
+
+    if include_policy_value not in POLICY_VALUES:
+        raise ConfigurationError(
+            "Configuration field 'ruleset.include_policy_value' "
+            "must be required, review, or excluded."
+        )
+
+    return settings
+
+
 def load_config(
     path: Path,
     *,
@@ -581,6 +645,7 @@ def load_config(
     properties = _table(data, "properties")
     policy = _table(data, "policy")
     workflow = _table(data, "workflow")
+    ruleset = _table(data, "ruleset")
 
     organization = _organization(
         _string(
@@ -742,6 +807,10 @@ def load_config(
         workflow,
         organization,
     )
+    ruleset_settings = _ruleset_settings(
+        ruleset,
+        workflow_settings,
+    )
 
     return OnboardingConfig(
         schema_version=schema_version,
@@ -750,6 +819,7 @@ def load_config(
         properties=property_settings,
         policy=policy_settings,
         workflow=workflow_settings,
+        ruleset=ruleset_settings,
         source_path=path,
         source_sha256=hashlib.sha256(raw).hexdigest(),
     )

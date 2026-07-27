@@ -39,7 +39,7 @@ action_repository = "blackduck-inc/black-duck-security-scan"
 action_commit_sha = "152247222aa9cd38124acd5c0cf60f4db71adc3f"
 
 [ruleset]
-enabled = false
-name = ""
+enabled = true
+name = "Black Duck SCA Required"
 enforcement = "evaluate"
 include_policy_value = "required"

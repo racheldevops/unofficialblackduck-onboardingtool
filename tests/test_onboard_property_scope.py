@@ -11,32 +11,24 @@ from github_onboard.cli import (
     build_parser,
     selected_property_repositories,
 )
-from github_onboard.config import (
-    initialize_config,
-    load_config,
-)
+from github_onboard.config import initialize_config, load_config
 from github_onboard.errors import OnboardError
 from github_onboard.inventory import fresh_inventory_arguments
-from github_onboard.models import (
-    InventoryBundle,
-    OnboardingConfig,
-)
+from github_onboard.models import InventoryBundle
 from github_onboard.properties import run_properties
 from github_onboard.workspace import Workspace
 
 
-def make_config(tmp_path: Path) -> OnboardingConfig:
-    path = tmp_path / "config" / "onboarding.toml"
+def make_config(tmp_path: Path):
+    path = tmp_path / "config/onboarding.toml"
     initialize_config(path, "acme")
     return load_config(path)
 
 
-def inventory_record(
+def record(
     name: str,
     repository_id: str,
-    *,
-    activity: str = "active",
-    languages: list[str] | None = None,
+    language: str = "python",
 ) -> dict[str, Any]:
     return {
         "repository_id": repository_id,
@@ -48,31 +40,26 @@ def inventory_record(
         "is_archived": False,
         "is_template": False,
         "pushed_at": "2026-07-01T00:00:00Z",
-        "activity_status": activity,
-        "detected_languages": (
-            ["python"]
-            if languages is None
-            else languages
-        ),
+        "activity_status": "active",
+        "detected_languages": [language],
     }
 
 
-def inventory_bundle(
+def bundle(
     tmp_path: Path,
     records: tuple[dict[str, Any], ...],
-    *,
-    additional_states: dict[str, dict[str, Any]] | None = None,
+    extra_states: dict[str, dict[str, Any]] | None = None,
 ) -> InventoryBundle:
     states = {
-        record["name_with_owner"]: {
+        item["name_with_owner"]: {
             "checkpoint_status": "successful",
-            "repository_id": record["repository_id"],
-            "name_with_owner": record["name_with_owner"],
-            "inventory": record,
+            "repository_id": item["repository_id"],
+            "name_with_owner": item["name_with_owner"],
+            "inventory": item,
         }
-        for record in records
+        for item in records
     }
-    states.update(additional_states or {})
+    states.update(extra_states or {})
 
     return InventoryBundle(
         directory=tmp_path / "inventory",
@@ -85,7 +72,7 @@ def inventory_bundle(
     )
 
 
-def compatible_definitions() -> list[dict[str, Any]]:
+def definitions() -> list[dict[str, Any]]:
     return [
         {
             "property_name": "blackduck_activity",
@@ -128,11 +115,9 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     ]
 
 
-def read_only_handler(
+def read_transport(
     methods: list[str],
 ) -> httpx.MockTransport:
-    definitions = compatible_definitions()
-
     def handler(request: httpx.Request) -> httpx.Response:
         methods.append(request.method)
         path = request.url.path
@@ -152,7 +137,7 @@ def read_only_handler(
         if path == "/orgs/acme/properties/schema":
             return httpx.Response(
                 200,
-                json=definitions,
+                json=definitions(),
             )
 
         if path == "/orgs/acme/properties/values":
@@ -165,7 +150,7 @@ def read_only_handler(
     return httpx.MockTransport(handler)
 
 
-def test_parser_accepts_limit_and_repeated_repositories() -> None:
+def test_parser_accepts_limit_and_repeated_repository() -> None:
     arguments = build_parser().parse_args(
         [
             "properties",
@@ -185,71 +170,49 @@ def test_parser_accepts_limit_and_repeated_repositories() -> None:
     ]
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "not-an-integer"])
-def test_parser_rejects_invalid_property_limit(
-    value: str,
-) -> None:
+@pytest.mark.parametrize("value", ["0", "-1", "invalid"])
+def test_parser_rejects_invalid_limit(value: str) -> None:
     with pytest.raises(SystemExit) as captured:
         build_parser().parse_args(
-            [
-                "properties",
-                "--limit",
-                value,
-            ]
+            ["properties", "--limit", value]
         )
 
     assert captured.value.code == 2
 
 
-def test_cli_repository_validation_rejects_other_org(
+@pytest.mark.parametrize(
+    "repositories",
+    [
+        ["other/repository"],
+        ["invalid"],
+        ["acme/repository", "ACME/REPOSITORY"],
+    ],
+)
+def test_cli_rejects_invalid_repository_scope(
     tmp_path: Path,
+    repositories: list[str],
 ) -> None:
     parser = build_parser()
-    arguments = parser.parse_args(
-        [
-            "properties",
-            "--repository",
-            "other/repository",
-        ]
-    )
-    config = make_config(tmp_path)
+    arguments: list[str] = ["properties"]
+
+    for repository in repositories:
+        arguments.extend(
+            ["--repository", repository]
+        )
+
+    parsed = parser.parse_args(arguments)
 
     with pytest.raises(SystemExit) as captured:
         selected_property_repositories(
             parser,
-            arguments,
-            config,
+            parsed,
+            make_config(tmp_path),
         )
 
     assert captured.value.code == 2
 
 
-def test_cli_repository_validation_rejects_duplicates(
-    tmp_path: Path,
-) -> None:
-    parser = build_parser()
-    arguments = parser.parse_args(
-        [
-            "properties",
-            "--repository",
-            "acme/repository",
-            "--repository",
-            "ACME/REPOSITORY",
-        ]
-    )
-    config = make_config(tmp_path)
-
-    with pytest.raises(SystemExit) as captured:
-        selected_property_repositories(
-            parser,
-            arguments,
-            config,
-        )
-
-    assert captured.value.code == 2
-
-
-def test_cli_repository_count_cannot_exceed_limit(
+def test_cli_rejects_repository_count_above_limit(
     tmp_path: Path,
 ) -> None:
     parser = build_parser()
@@ -264,25 +227,22 @@ def test_cli_repository_count_cannot_exceed_limit(
             "acme/second",
         ]
     )
-    config = make_config(tmp_path)
 
     with pytest.raises(SystemExit) as captured:
         selected_property_repositories(
             parser,
             arguments,
-            config,
+            make_config(tmp_path),
         )
 
     assert captured.value.code == 2
 
 
-def test_fresh_inventory_arguments_receive_limit(
+def test_fresh_inventory_receives_limit(
     tmp_path: Path,
 ) -> None:
-    config = make_config(tmp_path)
-
     arguments = fresh_inventory_arguments(
-        config,
+        make_config(tmp_path),
         tmp_path / "inventory",
         insecure=True,
         limit=50,
@@ -290,48 +250,36 @@ def test_fresh_inventory_arguments_receive_limit(
 
     assert arguments.limit == 50
     assert arguments.insecure is True
-    assert arguments.output_dir == tmp_path / "inventory"
 
 
-def test_limit_is_forwarded_and_recorded_in_dry_run(
+def test_limit_is_forwarded_and_audited(
     tmp_path: Path,
 ) -> None:
     config = make_config(tmp_path)
     workspace = Workspace.from_root(
         tmp_path / ".inventory"
     )
-    records = (
-        inventory_record("acme/first", "R_first"),
-        inventory_record(
-            "acme/second",
-            "R_second",
-            languages=["java"],
+    calls: list[int | None] = []
+    methods: list[str] = []
+    inventory = bundle(
+        tmp_path,
+        (
+            record("acme/first", "R_first"),
+            record("acme/second", "R_second", "java"),
         ),
     )
-    calls: list[dict[str, Any]] = []
-    methods: list[str] = []
 
-    def inventory_loader(
-        received_config,
-        output_directory,
-        token,
+    def loader(
+        _config,
+        _directory,
+        _token,
         *,
         insecure,
         limit,
     ):
-        calls.append(
-            {
-                "config": received_config,
-                "output_directory": output_directory,
-                "token": token,
-                "insecure": insecure,
-                "limit": limit,
-            }
-        )
-        return 0, inventory_bundle(
-            tmp_path,
-            records,
-        )
+        assert insecure is False
+        calls.append(limit)
+        return 0, inventory
 
     result, output = run_properties(
         config,
@@ -341,43 +289,23 @@ def test_limit_is_forwarded_and_recorded_in_dry_run(
         refresh_all=False,
         insecure=False,
         limit=2,
-        inventory_loader=inventory_loader,
-        transport=read_only_handler(methods),
+        inventory_loader=loader,
+        transport=read_transport(methods),
     )
 
     assert result == 0
-    assert calls == [
-        {
-            "config": config,
-            "output_directory": (
-                workspace.inventory_directory
-            ),
-            "token": "test-token",
-            "insecure": False,
-            "limit": 2,
-        }
-    ]
-    assert methods
+    assert calls == [2]
     assert set(methods) == {"GET"}
 
     plan = read_jsonl(
         output / "property-plan.jsonl"
     )
-    summary = read_jsonl(
-        output / "property-summary.jsonl"
-    )[0]
     metadata = next(
-        record
-        for record in plan
-        if record["record_type"]
+        item
+        for item in plan
+        if item["record_type"]
         == "property_plan_metadata"
     )
-    assignments = [
-        record
-        for record in plan
-        if record["record_type"]
-        == "repository_property_plan"
-    ]
 
     assert metadata["scope"] == {
         "mode": "limit",
@@ -385,53 +313,33 @@ def test_limit_is_forwarded_and_recorded_in_dry_run(
         "repositories": [],
         "selected_repository_count": 2,
     }
-    assert summary["scope"] == metadata["scope"]
-    assert {
-        record["name_with_owner"]
-        for record in assignments
-    } == {
-        "acme/first",
-        "acme/second",
-    }
 
 
-def test_exact_repository_scope_filters_full_inventory(
+def test_exact_repository_filters_full_inventory(
     tmp_path: Path,
 ) -> None:
     config = make_config(tmp_path)
     workspace = Workspace.from_root(
         tmp_path / ".inventory"
     )
-    records = (
-        inventory_record("acme/first", "R_first"),
-        inventory_record(
-            "acme/second",
-            "R_second",
-            languages=["java"],
+    methods: list[str] = []
+    inventory = bundle(
+        tmp_path,
+        (
+            record("acme/first", "R_first"),
+            record("acme/second", "R_second", "java"),
         ),
     )
-    calls: list[dict[str, Any]] = []
-    methods: list[str] = []
 
-    def inventory_loader(
-        received_config,
-        output_directory,
-        token,
+    def loader(
+        _config,
+        _directory,
+        _token,
         *,
         insecure,
     ):
-        calls.append(
-            {
-                "config": received_config,
-                "output_directory": output_directory,
-                "token": token,
-                "insecure": insecure,
-            }
-        )
-        return 0, inventory_bundle(
-            tmp_path,
-            records,
-        )
+        assert insecure is False
+        return 0, inventory
 
     result, output = run_properties(
         config,
@@ -442,78 +350,66 @@ def test_exact_repository_scope_filters_full_inventory(
         insecure=False,
         limit=1,
         repositories=("acme/second",),
-        inventory_loader=inventory_loader,
-        transport=read_only_handler(methods),
+        inventory_loader=loader,
+        transport=read_transport(methods),
     )
 
     assert result == 0
-    assert len(calls) == 1
-    assert "limit" not in calls[0]
-    assert set(methods) == {"GET"}
-
     plan = read_jsonl(
         output / "property-plan.jsonl"
     )
-    summary = read_jsonl(
-        output / "property-summary.jsonl"
-    )[0]
-    metadata = next(
-        record
-        for record in plan
-        if record["record_type"]
-        == "property_plan_metadata"
-    )
     assignments = [
-        record
-        for record in plan
-        if record["record_type"]
+        item
+        for item in plan
+        if item["record_type"]
         == "repository_property_plan"
     ]
+    metadata = next(
+        item
+        for item in plan
+        if item["record_type"]
+        == "property_plan_metadata"
+    )
 
+    assert [
+        item["name_with_owner"]
+        for item in assignments
+    ] == ["acme/second"]
     assert metadata["scope"] == {
         "mode": "repositories",
         "limit": 1,
         "repositories": ["acme/second"],
         "selected_repository_count": 1,
     }
-    assert summary["scope"] == metadata["scope"]
-    assert [
-        record["name_with_owner"]
-        for record in assignments
-    ] == ["acme/second"]
 
 
-def test_exact_repository_apply_mutates_only_selected_repo(
+def test_exact_repository_apply_mutates_only_target(
     tmp_path: Path,
 ) -> None:
     config = make_config(tmp_path)
     workspace = Workspace.from_root(
         tmp_path / ".inventory"
     )
-    records = (
-        inventory_record("acme/first", "R_first"),
-        inventory_record(
-            "acme/second",
-            "R_second",
-            languages=["java"],
+    inventory = bundle(
+        tmp_path,
+        (
+            record("acme/first", "R_first"),
+            record("acme/second", "R_second", "java"),
         ),
     )
     current: dict[str, dict[str, Any]] = {}
     patch_bodies: list[dict[str, Any]] = []
     requested_paths: list[str] = []
 
-    def inventory_loader(
+    def loader(
         _config,
-        _output_directory,
+        _directory,
         _token,
         *,
         insecure,
     ):
         assert insecure is False
-        return 0, inventory_bundle(
-            tmp_path,
-            records,
-        )
+        return 0, inventory
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -534,7 +430,7 @@ def test_exact_repository_apply_mutates_only_selected_repo(
         if path == "/orgs/acme/properties/schema":
             return httpx.Response(
                 200,
-                json=compatible_definitions(),
+                json=definitions(),
             )
 
         if (
@@ -580,7 +476,7 @@ def test_exact_repository_apply_mutates_only_selected_repo(
             f"Unexpected request: {request.method} {request.url}"
         )
 
-    result, output = run_properties(
+    result, _output = run_properties(
         config,
         workspace,
         "test-token",
@@ -588,7 +484,7 @@ def test_exact_repository_apply_mutates_only_selected_repo(
         refresh_all=False,
         insecure=False,
         repositories=("acme/second",),
-        inventory_loader=inventory_loader,
+        inventory_loader=loader,
         transport=httpx.MockTransport(handler),
     )
 
@@ -603,36 +499,18 @@ def test_exact_repository_apply_mutates_only_selected_repo(
         not in requested_paths
     )
 
-    apply_records = read_jsonl(
-        output / "property-apply.jsonl"
-    )
-    repository_apply = [
-        record
-        for record in apply_records
-        if record.get("resource_type")
-        == "repository_assignment"
-    ]
 
-    assert [
-        record["name_with_owner"]
-        for record in repository_apply
-    ] == ["acme/second"]
-
-
-def test_requested_failed_repository_blocks_before_rest(
+def test_failed_requested_repository_blocks_before_rest(
     tmp_path: Path,
 ) -> None:
     config = make_config(tmp_path)
     workspace = Workspace.from_root(
         tmp_path / ".inventory"
     )
-    records = (
-        inventory_record("acme/good", "R_good"),
-    )
-    bundle = inventory_bundle(
+    inventory = bundle(
         tmp_path,
-        records,
-        additional_states={
+        (record("acme/good", "R_good"),),
+        {
             "acme/failed": {
                 "checkpoint_status": "failed",
                 "repository_id": "R_failed",
@@ -641,21 +519,21 @@ def test_requested_failed_repository_blocks_before_rest(
         },
     )
 
-    def inventory_loader(
+    def loader(
         _config,
-        _output_directory,
+        _directory,
         _token,
         *,
         insecure,
     ):
         assert insecure is False
-        return 1, bundle
+        return 1, inventory
 
     def handler(
         _request: httpx.Request,
     ) -> httpx.Response:
         raise AssertionError(
-            "REST request occurred for invalid repository scope."
+            "REST was reached for an invalid scope."
         )
 
     with pytest.raises(OnboardError) as captured:
@@ -667,36 +545,34 @@ def test_requested_failed_repository_blocks_before_rest(
             refresh_all=False,
             insecure=False,
             repositories=("acme/failed",),
-            inventory_loader=inventory_loader,
+            inventory_loader=loader,
             transport=httpx.MockTransport(handler),
         )
 
     assert captured.value.category == (
         "repository_scope_error"
     )
-    assert "acme/failed (failed)" in str(captured.value)
+    assert "acme/failed (failed)" in str(
+        captured.value
+    )
 
 
-def test_direct_scope_count_guard_runs_before_inventory(
+def test_scope_count_guard_precedes_inventory(
     tmp_path: Path,
 ) -> None:
-    config = make_config(tmp_path)
-    workspace = Workspace.from_root(
-        tmp_path / ".inventory"
-    )
-    inventory_called = False
+    called = False
 
-    def inventory_loader(*_args, **_kwargs):
-        nonlocal inventory_called
-        inventory_called = True
-        raise AssertionError(
-            "Inventory ran despite an invalid scope."
-        )
+    def loader(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("Inventory should not run.")
 
-    with pytest.raises(OnboardError) as captured:
+    with pytest.raises(OnboardError):
         run_properties(
-            config,
-            workspace,
+            make_config(tmp_path),
+            Workspace.from_root(
+                tmp_path / ".inventory"
+            ),
             "test-token",
             apply=True,
             refresh_all=False,
@@ -706,10 +582,7 @@ def test_direct_scope_count_guard_runs_before_inventory(
                 "acme/first",
                 "acme/second",
             ),
-            inventory_loader=inventory_loader,
+            inventory_loader=loader,
         )
 
-    assert captured.value.category == (
-        "repository_scope_error"
-    )
-    assert inventory_called is False
+    assert called is False

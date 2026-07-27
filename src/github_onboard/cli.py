@@ -16,6 +16,7 @@ from .errors import OnboardError
 from .models import OnboardingConfig
 from .preflight import run_preflight
 from .properties import run_properties
+from .rulesets import run_rulesets
 from .workflow import run_workflow
 from .workspace import DEFAULT_WORKSPACE, Workspace
 
@@ -166,6 +167,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Publish the calculated workflow change.",
     )
     workflow_parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Disable TLS certificate verification.",
+    )
+
+    rulesets_parser = commands.add_parser(
+        "rulesets",
+        help=(
+            "Plan, create, update, or activate the "
+            "Black Duck organization ruleset."
+        ),
+    )
+    rulesets_parser.add_argument(
+        "ruleset_operation",
+        nargs="?",
+        choices=("activate",),
+        help=(
+            "Activate the existing evaluated ruleset."
+        ),
+    )
+    rulesets_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the calculated ruleset change.",
+    )
+    rulesets_parser.add_argument(
         "--insecure",
         action="store_true",
         help="Disable TLS certificate verification.",
@@ -404,6 +431,48 @@ def run_workflow_command(
     return result
 
 
+def run_rulesets_command(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> int:
+    workspace, config = selected_configuration(args)
+    token = required_token(parser)
+
+    if args.insecure:
+        emit_insecure_warning()
+
+    activate = args.ruleset_operation == "activate"
+    result, output_directory = run_rulesets(
+        config,
+        workspace,
+        token,
+        apply=args.apply,
+        activate=activate,
+        insecure=args.insecure,
+    )
+    print(
+        json.dumps(
+            {
+                "record_type": "rulesets_complete",
+                "result": result,
+                "operation": (
+                    "activate"
+                    if activate
+                    else "configure"
+                ),
+                "mode": (
+                    "apply"
+                    if args.apply
+                    else "dry_run"
+                ),
+                "output_directory": str(output_directory),
+            },
+            sort_keys=True,
+        )
+    )
+    return result
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -421,6 +490,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.command == "workflow":
             return run_workflow_command(parser, args)
+
+        if args.command == "rulesets":
+            return run_rulesets_command(parser, args)
 
         parser.error(f"Unsupported command: {args.command}")
     except KeyboardInterrupt:

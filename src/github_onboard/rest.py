@@ -104,6 +104,38 @@ ALLOWED_ROUTES = (
         mutation=True,
         success_statuses=frozenset({200, 201}),
     ),
+    AllowedRoute(
+        method="GET",
+        pattern=re.compile(
+            rf"^/orgs/{_SEGMENT}/rulesets$"
+        ),
+        mutation=False,
+        success_statuses=frozenset({200}),
+    ),
+    AllowedRoute(
+        method="GET",
+        pattern=re.compile(
+            rf"^/orgs/{_SEGMENT}/rulesets/[0-9]+$"
+        ),
+        mutation=False,
+        success_statuses=frozenset({200}),
+    ),
+    AllowedRoute(
+        method="POST",
+        pattern=re.compile(
+            rf"^/orgs/{_SEGMENT}/rulesets$"
+        ),
+        mutation=True,
+        success_statuses=frozenset({201}),
+    ),
+    AllowedRoute(
+        method="PUT",
+        pattern=re.compile(
+            rf"^/orgs/{_SEGMENT}/rulesets/[0-9]+$"
+        ),
+        mutation=True,
+        success_statuses=frozenset({200}),
+    ),
 )
 
 
