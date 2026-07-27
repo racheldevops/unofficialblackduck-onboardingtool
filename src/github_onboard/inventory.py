@@ -22,6 +22,7 @@ def fresh_inventory_arguments(
     output_directory: Path,
     *,
     insecure: bool,
+    limit: int | None = None,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         max_hours=config.inventory.max_hours,
@@ -32,7 +33,7 @@ def fresh_inventory_arguments(
         timeout=config.inventory.timeout_seconds,
         retries=config.inventory.retries,
         inspection_depth=config.inventory.inspection_depth,
-        limit=None,
+        limit=limit,
         insecure=insecure,
         workers=config.inventory.workers,
         graphql_url=config.github.graphql_url,
@@ -45,12 +46,14 @@ def run_fresh_inventory(
     token: str,
     *,
     insecure: bool,
+    limit: int | None = None,
     runner: InventoryRunner = run_inventory,
 ) -> tuple[int, InventoryBundle]:
     arguments = fresh_inventory_arguments(
         config,
         output_directory,
         insecure=insecure,
+        limit=limit,
     )
     result = runner(
         arguments,

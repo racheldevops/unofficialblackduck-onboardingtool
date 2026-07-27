@@ -44,6 +44,22 @@ def redact(value: str, token: str) -> str:
     return value.replace(token, "[REDACTED]")
 
 
+def positive_integer(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "Value must be an integer."
+        ) from error
+
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(
+            "Value must be greater than zero."
+        )
+
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -112,6 +128,24 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Replace existing managed property values with "
             "current inventory-derived values."
+        ),
+    )
+    properties_parser.add_argument(
+        "--limit",
+        type=positive_integer,
+        help=(
+            "Process a deterministic sample of up to this many "
+            "repositories, or cap an explicit repository list."
+        ),
+    )
+    properties_parser.add_argument(
+        "--repository",
+        action="append",
+        default=[],
+        metavar="OWNER/REPOSITORY",
+        help=(
+            "Process exactly this repository. Repeat for multiple "
+            "repositories."
         ),
     )
     properties_parser.add_argument(
@@ -238,11 +272,67 @@ def run_preflight_command(
     return 0
 
 
+def selected_property_repositories(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    config: OnboardingConfig,
+) -> tuple[str, ...]:
+    repositories = tuple(args.repository)
+    normalized: set[str] = set()
+
+    for repository in repositories:
+        if (
+            repository.count("/") != 1
+            or repository.startswith("/")
+            or repository.endswith("/")
+        ):
+            parser.error(
+                "--repository must use OWNER/REPOSITORY."
+            )
+
+        owner, name = repository.split("/", 1)
+
+        if (
+            not owner
+            or not name
+            or owner.casefold()
+            != config.github.organization.casefold()
+        ):
+            parser.error(
+                "--repository must belong to the configured "
+                "organization."
+            )
+
+        key = repository.casefold()
+
+        if key in normalized:
+            parser.error(
+                f"Duplicate --repository: {repository}"
+            )
+
+        normalized.add(key)
+
+    if (
+        args.limit is not None
+        and len(repositories) > args.limit
+    ):
+        parser.error(
+            "Explicit --repository count exceeds --limit."
+        )
+
+    return repositories
+
+
 def run_properties_command(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
 ) -> int:
     workspace, config = selected_configuration(args)
+    repositories = selected_property_repositories(
+        parser,
+        args,
+        config,
+    )
     token = required_token(parser)
 
     if args.insecure:
@@ -255,6 +345,8 @@ def run_properties_command(
         apply=args.apply,
         refresh_all=args.refresh_all,
         insecure=args.insecure,
+        limit=args.limit,
+        repositories=repositories,
     )
     print(
         json.dumps(
@@ -267,6 +359,8 @@ def run_properties_command(
                     else "dry_run"
                 ),
                 "refresh_all": args.refresh_all,
+                "limit": args.limit,
+                "repositories": list(repositories),
                 "output_directory": str(output_directory),
             },
             sort_keys=True,

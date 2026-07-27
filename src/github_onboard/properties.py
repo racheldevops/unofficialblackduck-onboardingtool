@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from dataclasses import replace
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,129 @@ from .workspace import (
 
 
 InventoryLoader = Callable[..., tuple[int, InventoryBundle]]
+
+
+def _normalize_repository_scope(
+    repositories: Sequence[str],
+    organization: str,
+) -> tuple[str, ...]:
+    selected: list[str] = []
+    normalized: set[str] = set()
+
+    for repository in repositories:
+        if not isinstance(repository, str):
+            raise OnboardError(
+                "Repository scope values must be strings.",
+                category="repository_scope_error",
+            )
+
+        name = repository.strip()
+
+        if (
+            name.count("/") != 1
+            or name.startswith("/")
+            or name.endswith("/")
+        ):
+            raise OnboardError(
+                f"Repository scope must use owner/name: {name!r}.",
+                category="repository_scope_error",
+            )
+
+        owner, repository_name = name.split("/", 1)
+
+        if (
+            not owner
+            or not repository_name
+            or owner.casefold() != organization.casefold()
+        ):
+            raise OnboardError(
+                f"Repository scope is outside organization "
+                f"'{organization}': {name!r}.",
+                category="repository_scope_error",
+            )
+
+        key = name.casefold()
+
+        if key in normalized:
+            raise OnboardError(
+                f"Duplicate repository scope: {name}",
+                category="repository_scope_error",
+            )
+
+        normalized.add(key)
+        selected.append(name)
+
+    return tuple(selected)
+
+
+def _scope_inventory_bundle(
+    bundle: InventoryBundle,
+    repositories: Sequence[str],
+) -> InventoryBundle:
+    successful = {
+        record["name_with_owner"].casefold(): record
+        for record in bundle.inventory
+    }
+    checkpoint = {
+        name.casefold(): state
+        for name, state in bundle.checkpoint_states.items()
+    }
+    unavailable: list[str] = []
+
+    for repository in repositories:
+        key = repository.casefold()
+
+        if key in successful:
+            continue
+
+        state = checkpoint.get(key)
+        status = (
+            state.get("checkpoint_status")
+            if isinstance(state, dict)
+            else "not_found"
+        )
+        unavailable.append(
+            f"{repository} ({status})"
+        )
+
+    if unavailable:
+        raise OnboardError(
+            "Requested repositories are not successful inventory "
+            "records: " + ", ".join(unavailable),
+            category="repository_scope_error",
+        )
+
+    selected = tuple(
+        successful[repository.casefold()]
+        for repository in repositories
+    )
+
+    return replace(
+        bundle,
+        inventory=selected,
+        failures=(),
+    )
+
+
+def _scope_record(
+    *,
+    limit: int | None,
+    repositories: Sequence[str],
+    selected_count: int,
+) -> dict[str, Any]:
+    if repositories:
+        mode = "repositories"
+    elif limit is not None:
+        mode = "limit"
+    else:
+        mode = "all"
+
+    return {
+        "mode": mode,
+        "limit": limit,
+        "repositories": list(repositories),
+        "selected_repository_count": selected_count,
+    }
 
 
 def _redact(value: str, token: str) -> str:
@@ -235,6 +359,15 @@ def _base_summary(
         "mutation_requested": apply,
         "mutation_occurred": mutation_occurred,
         "refresh_all": refresh_all,
+        "scope": next(
+            (
+                record.get("scope")
+                for record in plan_records
+                if record.get("record_type")
+                == "property_plan_metadata"
+            ),
+            None,
+        ),
         "inventory_sha256": bundle.sha256,
         "config_sha256": config.source_sha256,
         "inventory_repository_count": len(bundle.inventory),
@@ -757,18 +890,71 @@ def run_properties(
     apply: bool,
     refresh_all: bool,
     insecure: bool,
+    limit: int | None = None,
+    repositories: Sequence[str] = (),
     inventory_loader: InventoryLoader = run_fresh_inventory,
     transport: Any = None,
 ) -> tuple[int, Path]:
+    if limit is not None and (
+        type(limit) is not int or limit <= 0
+    ):
+        raise OnboardError(
+            "Property scope limit must be a positive integer.",
+            category="repository_scope_error",
+        )
+
+    repository_scope = _normalize_repository_scope(
+        repositories,
+        config.github.organization,
+    )
+
+    if (
+        limit is not None
+        and repository_scope
+        and len(repository_scope) > limit
+    ):
+        raise OnboardError(
+            "Explicit repository count exceeds --limit.",
+            category="repository_scope_error",
+        )
+
     started = time.monotonic()
     run_id, run_directory = (
         workspace.create_run_directory("properties")
     )
-    inventory_result, bundle = inventory_loader(
-        config,
-        workspace.inventory_directory,
-        token,
-        insecure=insecure,
+    inventory_limit = (
+        None
+        if repository_scope
+        else limit
+    )
+
+    if inventory_limit is None:
+        inventory_result, bundle = inventory_loader(
+            config,
+            workspace.inventory_directory,
+            token,
+            insecure=insecure,
+        )
+    else:
+        inventory_result, bundle = inventory_loader(
+            config,
+            workspace.inventory_directory,
+            token,
+            insecure=insecure,
+            limit=inventory_limit,
+        )
+
+    if repository_scope:
+        bundle = _scope_inventory_bundle(
+            bundle,
+            repository_scope,
+        )
+        inventory_result = 0
+
+    scope = _scope_record(
+        limit=limit,
+        repositories=repository_scope,
+        selected_count=len(bundle.inventory),
     )
     deadline = (
         started
@@ -799,6 +985,13 @@ def run_properties(
             definitions,
             assignments,
             refresh_all=refresh_all,
+        )
+        raw_plan = (
+            {
+                **raw_plan[0],
+                "scope": scope,
+            },
+            *raw_plan[1:],
         )
         plan_records = _plan_records(
             raw_plan,
